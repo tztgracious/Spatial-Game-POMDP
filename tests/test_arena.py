@@ -103,6 +103,52 @@ class TestArenaReset:
 
 
 # ---------------------------------------------------------------------------
+# Spawn randomisation
+# ---------------------------------------------------------------------------
+
+class TestArenaSpawnRandomisation:
+    def test_fixed_spawn_uses_corners(self):
+        env = ArenaEnv(randomize_spawn=False)
+        env.reset(seed=0)
+        np.testing.assert_array_almost_equal(env._positions[0], [1.0, 1.0])
+        np.testing.assert_array_almost_equal(
+            env._positions[1], [env.width - 1.0, env.height - 1.0]
+        )
+
+    def test_random_spawn_varies_across_seeds(self):
+        env = ArenaEnv(randomize_spawn=True)
+        env.reset(seed=0)
+        pos_a = env._positions.copy()
+        env.reset(seed=1)
+        pos_b = env._positions.copy()
+        assert not np.allclose(pos_a, pos_b)
+
+    def test_random_spawn_same_seed_reproducible(self):
+        env = ArenaEnv(randomize_spawn=True)
+        env.reset(seed=42)
+        pos_a = env._positions.copy()
+        env.reset(seed=42)
+        pos_b = env._positions.copy()
+        np.testing.assert_array_almost_equal(pos_a, pos_b)
+
+    def test_random_spawn_respects_min_separation(self):
+        env = ArenaEnv(randomize_spawn=True)
+        for s in range(20):
+            env.reset(seed=s)
+            d = np.linalg.norm(env._positions[0] - env._positions[1])
+            assert d >= ArenaEnv._SPAWN_MIN_SEP - 1e-5
+
+    def test_random_spawn_within_margin(self):
+        env = ArenaEnv(randomize_spawn=True)
+        for s in range(20):
+            env.reset(seed=s)
+            for i in range(N_AGENTS):
+                x, y = env._positions[i]
+                assert env._SPAWN_MARGIN <= x <= env.width - env._SPAWN_MARGIN
+                assert env._SPAWN_MARGIN <= y <= env.height - env._SPAWN_MARGIN
+
+
+# ---------------------------------------------------------------------------
 # Movement
 # ---------------------------------------------------------------------------
 
@@ -333,3 +379,154 @@ class TestArenaPerformance:
 
         avg_ms = float(np.mean(times)) * 1000.0
         assert avg_ms < 1.0, f"Average step time {avg_ms:.4f}ms exceeds 1ms budget"
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: probabilistic combat
+# ---------------------------------------------------------------------------
+
+class TestProbabilisticCombat:
+    """Statistical tests — run many fire actions and verify hit-rate distributions."""
+
+    @staticmethod
+    def _hit_rate(env, trials: int = 300) -> float:
+        hits = 0
+        for _ in range(trials):
+            hp_before = env._hp[1]
+            env.step([FIRE, STAY])
+            if env._hp[1] < hp_before:
+                hits += 1
+            env._hp[1] = env.max_hp  # reset HP so episode never terminates
+        return hits / trials
+
+    def test_distance_scale_none_is_deterministic(self):
+        """Default (distance_scale=None) should always hit — backwards-compatible."""
+        env = ArenaEnv(walls=[], distance_scale=None)
+        env.reset(seed=0)
+        env._positions[0] = [2.0, 5.0]
+        env._positions[1] = [8.0, 5.0]
+        rate = self._hit_rate(env)
+        assert rate == pytest.approx(1.0)
+
+    def test_hit_rate_decreases_with_distance(self):
+        """Hit rate must be lower at long range than close range."""
+        env_close = ArenaEnv(walls=[], distance_scale=5.0)
+        env_close.reset(seed=0)
+        env_close._positions[0] = [4.5, 5.0]
+        env_close._positions[1] = [5.5, 5.0]   # dist = 1
+
+        env_far = ArenaEnv(walls=[], distance_scale=5.0)
+        env_far.reset(seed=0)
+        env_far._positions[0] = [1.0, 5.0]
+        env_far._positions[1] = [9.0, 5.0]     # dist = 8
+
+        rate_close = self._hit_rate(env_close)
+        rate_far = self._hit_rate(env_far)
+        assert rate_close > rate_far
+
+    def test_hit_rate_below_one_at_long_range(self):
+        """At 8 units with distance_scale=5, expected rate ≈ exp(-1.6) ≈ 0.20."""
+        env = ArenaEnv(walls=[], distance_scale=5.0)
+        env.reset(seed=42)
+        env._positions[0] = [1.0, 5.0]
+        env._positions[1] = [9.0, 5.0]   # dist = 8
+        rate = self._hit_rate(env, trials=400)
+        assert rate < 0.5  # clearly below certain hit
+
+    def test_corner_peek_reduces_hit_rate(self):
+        """Target barely peeking around a corner is harder to hit than one fully exposed.
+
+        Option C geometry: wall from (5,0)→(5,7), A=(2,8) above the wall.
+        B_peek at (5.4, 7.2) has just cleared the upper corner — small d_peek → low exposure.
+        B_open at (8.0, 7.5) is far past the corner — large d_peek → high exposure.
+        """
+        walls = [((5.0, 0.0), (5.0, 7.0))]
+
+        env_peek = ArenaEnv(walls=walls, min_exposure=0.05)
+        env_peek.reset(seed=0)
+        env_peek._positions[0] = [2.0, 8.0]
+        env_peek._positions[1] = [5.4, 7.2]   # barely past upper corner
+
+        env_open = ArenaEnv(walls=walls, min_exposure=0.05)
+        env_open.reset(seed=0)
+        env_open._positions[0] = [2.0, 8.0]
+        env_open._positions[1] = [8.0, 7.5]   # far from corner, fully exposed
+
+        rate_peek = self._hit_rate(env_peek)
+        rate_open = self._hit_rate(env_open)
+        assert rate_peek < rate_open
+
+    def test_hit_info_in_step_output(self):
+        env = ArenaEnv(walls=[], distance_scale=5.0)
+        env.reset(seed=0)
+        env._positions[0] = [2.0, 5.0]
+        env._positions[1] = [8.0, 5.0]
+        _, _, _, _, info = env.step([FIRE, STAY])
+        assert "hit_info" in info
+        assert 0 in info["hit_info"]
+        assert isinstance(info["hit_info"][0], bool)
+
+    def test_no_damage_on_miss(self):
+        """If hit_info says miss, HP must be unchanged."""
+        env = ArenaEnv(walls=[], distance_scale=5.0)
+        env.reset(seed=0)
+        env._positions[0] = [1.0, 5.0]
+        env._positions[1] = [9.0, 5.0]
+        for _ in range(50):
+            hp_before = env._hp[1]
+            _, _, terminated, truncated, info = env.step([FIRE, STAY])
+            if 0 in info["hit_info"] and not info["hit_info"][0]:
+                assert env._hp[1] == hp_before
+            env._hp[1] = env.max_hp
+            if terminated or truncated:
+                env.reset(seed=0)
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: RewardShaper integration
+# ---------------------------------------------------------------------------
+
+class TestArenaShaperIntegration:
+    def test_shaper_adds_positive_reward_when_approaching(self):
+        from env.reward_shaping import RewardShaper
+        shaper = RewardShaper(target_zone=(5.0, 5.0), initial_weight=10.0)
+        env = ArenaEnv(walls=[], shaper=shaper)
+        env.reset(seed=0)
+        # Place agent 0 far left; moving right approaches target_zone
+        env._positions[0] = [1.0, 5.0]
+        env._positions[1] = [9.0, 5.0]
+        _, reward, _, _, _ = env.step([RIGHT, STAY])  # agent 0 moves right
+        # Shaping should push reward upward; net > time_penalty alone
+        assert reward > -env.time_penalty - 1.0
+
+    def test_shaper_none_gives_same_reward_as_baseline(self):
+        env_base = ArenaEnv(walls=[])
+        env_base.reset(seed=0)
+        env_base._positions[0] = [5.0, 5.0]
+        env_base._positions[1] = [5.0, 5.0]
+        _, r_base, _, _, _ = env_base.step([STAY, STAY])
+
+        env_shape = ArenaEnv(walls=[], shaper=None)
+        env_shape.reset(seed=0)
+        env_shape._positions[0] = [5.0, 5.0]
+        env_shape._positions[1] = [5.0, 5.0]
+        _, r_shape, _, _, _ = env_shape.step([STAY, STAY])
+
+        assert r_base == pytest.approx(r_shape)
+
+    def test_shaper_weight_zero_gives_same_reward_as_no_shaper(self):
+        from env.reward_shaping import RewardShaper
+        shaper = RewardShaper(target_zone=(5.0, 5.0), initial_weight=0.0)
+        env_base = ArenaEnv(walls=[])
+        env_base.reset(seed=0)
+        env_base._positions[0] = [2.0, 5.0]
+        env_base._positions[1] = [8.0, 5.0]
+        _, r_base, _, _, _ = env_base.step([STAY, STAY])
+
+        env_shaped = ArenaEnv(walls=[], shaper=shaper)
+        env_shaped.reset(seed=0)
+        env_shaped._positions[0] = [2.0, 5.0]
+        env_shaped._positions[1] = [8.0, 5.0]
+        _, r_shaped, _, _, _ = env_shaped.step([STAY, STAY])
+
+        assert r_base == pytest.approx(r_shaped, abs=1e-5)

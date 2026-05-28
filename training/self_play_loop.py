@@ -165,6 +165,7 @@ def run_self_play(
     arena_kwargs: Optional[Dict[str, Any]] = None,
     ppo_kwargs: Optional[Dict[str, Any]] = None,
     pool_kwargs: Optional[Dict[str, Any]] = None,
+    callbacks: Optional[List] = None,
     seed: int = 0,
 ) -> PPO:
     """
@@ -196,6 +197,9 @@ def run_self_play(
         Override defaults in make_ppo_agent (e.g. n_steps=64 for tests).
     pool_kwargs : dict, optional
         Forwarded to ModelPool constructor (max_size, historical_prob).
+    callbacks : list of BaseCallback, optional
+        SB3 callbacks passed to every model.learn() call — use this to attach
+        CurriculumCallback for Phase 3 reward shaping decay.
     seed : int
         RNG seed for the learner.
 
@@ -232,6 +236,7 @@ def run_self_play(
             reset_num_timesteps=(gen == 0),
             tb_log_name="self_play",
             progress_bar=False,
+            callback=callbacks or [],
         )
 
         pool.add(model, steps_so_far + generation_steps)
