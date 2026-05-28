@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "spatial-game-pomdp"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.26",
+    "gymnasium>=0.29",
+    "stable-baselines3>=2.3",
+    "torch>=2.2",
+    "matplotlib>=3.8",
+    "tensorboard>=2.16",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-cov"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["core*", "env*", "agents*", "training*", "utils*", "analysis*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v"
