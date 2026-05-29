@@ -48,7 +48,7 @@ For each agent, per step:
 
 $$r = R_k \cdot \mathbf{1}_{\mathrm{kill}} - R_t - R_b \cdot \mathbf{1}_{\mathrm{blind\text{-}fire}} + w \cdot ( \gamma \Phi(s') - \Phi(s) )$$
 
-where the blind-fire indicator fires when the agent shoots without LoS, and $\Phi(s) = -\| p - z \|$ is the **potential function** — the negative distance to a chosen target zone $z$ (typically a wall corner). The shaping term is **Ng–Russell–Russell potential-based**, so adding it preserves the set of optimal policies. The weight $w$ is decayed linearly to zero by `CurriculumCallback`, so the final policy is optimal under the pure zero-sum reward.
+where the blind-fire indicator fires when the agent shoots without LoS, and $\Phi(s) = -\| p - z \|$ is the **potential function** — the negative distance to a chosen target zone $z$ (typically a wall corner). The shaping term is **Ng–Harada–Russell potential-based**, so adding it preserves the set of optimal policies. The weight $w$ is decayed linearly to zero by `CurriculumCallback`, so the final policy is optimal under the pure zero-sum reward.
 
 ## Results
 
@@ -86,7 +86,7 @@ Value heatmaps sweep agent A across the full arena, but the critic is only well-
 ```
 core/geometry.py             # LoS + active-corner geometry primitives
 env/arena.py                 # 2-player Gymnasium env (POMDP, simultaneous actions)
-env/reward_shaping.py        # Potential-based shaping (Ng-Russell-Russell)
+env/reward_shaping.py        # Potential-based shaping (Ng-Harada-Russell)
 utils/callbacks.py           # CurriculumCallback for linear shaping-weight decay
 agents/ppo_agent.py          # SB3 PPO factory (MLP [128, 128])
 training/self_play_loop.py   # SelfPlayWrapper + ModelPool + run_self_play
