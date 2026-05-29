@@ -23,7 +23,7 @@ python -m analysis.trajectory_plot       # plot policy progression across checkp
 
 Each step exposes two 7-element observation blocks (one per agent). For agent $i$ with opponent $j = 1 - i$:
 
-$$o_i = \big[\,x_i,\ y_i,\ h_i/H_{\max},\ \mathbb{1}_\mathrm{LoS},\ \tilde{x}_j,\ \tilde{y}_j,\ \tilde{h}_j/H_{\max}\,\big]$$
+$$o_i = [\, x_i,\ y_i,\ h_i / H_{\max},\ \mathbf{1}_{\mathrm{LoS}},\ \tilde{x}_j,\ \tilde{y}_j,\ \tilde{h}_j / H_{\max} \,]$$
 
 where $(\tilde{x}_j, \tilde{y}_j, \tilde{h}_j) = (x_j, y_j, h_j)$ when LoS is open and $(0, 0, 0)$ when blocked. This masking is what makes the problem a POMDP — each agent's observation is a *partial* view of the underlying world state.
 
@@ -31,22 +31,24 @@ where $(\tilde{x}_j, \tilde{y}_j, \tilde{h}_j) = (x_j, y_j, h_j)$ when LoS is op
 
 Per agent, $a \in \{0, 1, 2, 3, 4, 5\}$ — stay / up / down / left / right / fire. Both agents act simultaneously each step (`MultiDiscrete([6, 6])`).
 
-### Transition $P(s' \mid s, a)$
+### Transition
+
+The transition kernel $P(s' \mid s, a)$ has two parts:
 
 - **Movement** is deterministic: positions translate by $\Delta d = 0.5$ in the chosen direction, clipped to arena bounds.
-- **Combat** is probabilistic. When agent $i$ fires with $\mathrm{LoS} = \mathrm{True}$ the hit probability uses the **Option C 近大远小** formula:
+- **Combat** is probabilistic. When agent $i$ fires with LoS open, the hit probability uses the **Option C 近大远小** formula:
 
-$$P_\text{hit} = \exp\!\left(-\frac{\lVert p_j - p_i \rVert}{\sigma}\right)\;\cdot\;\max\!\left(\epsilon_{\min},\ \frac{\arctan\!\big(d_\text{peek}\,/\,\lVert c - p_i \rVert\big)}{\pi/2}\right)$$
+$$P_{\mathrm{hit}} = \exp\!\left( -\frac{\| p_j - p_i \|}{\sigma} \right) \cdot \max\!\left( \epsilon_{\min},\ \frac{\arctan\!\left( d_{\mathrm{peek}} / \| c - p_i \| \right)}{\pi / 2} \right)$$
 
-where $c$ is the **active corner** (the wall endpoint inside the shooter–target sightline) and $d_\text{peek}$ is the target's perpendicular distance to the shadow ray $p_i \to c$. Smaller peek → smaller exposure → smaller hit probability. Computed in `core/geometry.los_and_active_corner` and `core/geometry.hit_probability`.
+where $c$ is the **active corner** (the wall endpoint inside the shooter–target sightline) and $d_{\mathrm{peek}}$ is the target's perpendicular distance to the shadow ray $p_i \to c$. Smaller peek → smaller exposure → smaller hit probability. Computed in `core/geometry.los_and_active_corner` and `core/geometry.hit_probability`.
 
 ### Reward
 
 For each agent, per step:
 
-$$r = R_k \cdot \mathbb{1}_\text{kill}\;-\;R_t\;-\;R_b \cdot \mathbb{1}_{\text{fire} \wedge \neg \text{LoS}}\;+\;w \cdot \big(\gamma\,\Phi(s') - \Phi(s)\big)$$
+$$r = R_k \cdot \mathbf{1}_{\mathrm{kill}} \;-\; R_t \;-\; R_b \cdot \mathbf{1}_{\mathrm{blind\text{-}fire}} \;+\; w \cdot ( \gamma\, \Phi(s') - \Phi(s) )$$
 
-with $\Phi(s) = -\lVert p - z \rVert$ (negative distance to a chosen target zone $z$, typically a wall corner). The shaping term is **Ng–Russell–Russell potential-based**, so adding it preserves the set of optimal policies. The weight $w$ is decayed linearly to zero by `CurriculumCallback`, so the final policy is optimal under the pure zero-sum reward.
+where the blind-fire indicator fires when the agent shoots without LoS, and $\Phi(s) = -\| p - z \|$ is the **potential function** — the negative distance to a chosen target zone $z$ (typically a wall corner). The shaping term is **Ng–Russell–Russell potential-based**, so adding it preserves the set of optimal policies. The weight $w$ is decayed linearly to zero by `CurriculumCallback`, so the final policy is optimal under the pure zero-sum reward.
 
 ## Results
 
@@ -62,7 +64,7 @@ A 500k-step run (50 self-play generations, curriculum 1.0 → 0.0):
 Non-obvious mistakes encountered during development. Documented so future contributors don't repeat them.
 
 ### 1. Lower $\gamma$ gives *higher* potential shaping for approach
-Because $\Phi(s) = -\lVert p - z \rVert$ is **negative**, the term $\gamma\,\Phi(s') - \Phi(s)$ is dominated by how aggressively $\gamma$ discounts the negative future potential. The intuitive "lower γ should weaken shaping" is wrong. We initially had a failing test on this until we worked through the sign.
+Because $\Phi(s) = -\| p - z \|$ is **negative**, the term $\gamma \Phi(s') - \Phi(s)$ is dominated by how aggressively $\gamma$ discounts the negative future potential. The intuitive "lower γ should weaken shaping" is wrong. We initially had a failing test on this until we worked through the sign.
 
 ### 2. Fixed agent spawn → policy overfits to one trajectory
 The original `reset()` always spawned A at $(1, 1)$ and B at $(9, 9)$. PPO then learned "what to do from this exact start" rather than a generalising policy, and the critic's V(s) was only calibrated along the trained trajectory corridor — breaking downstream analyses like value heatmaps. Fix: `randomize_spawn=True` (new default) samples uniformly with a min-separation reject loop. Set `randomize_spawn=False` for tests / evaluation when you need determinism.
