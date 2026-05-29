@@ -23,7 +23,7 @@ python -m analysis.trajectory_plot       # plot policy progression across checkp
 
 Each step exposes two 7-element observation blocks (one per agent). For agent $i$ with opponent $j = 1 - i$:
 
-$$o_i = [\, x_i,\ y_i,\ h_i / H_{\max},\ \mathbf{1}_{\mathrm{LoS}},\ \tilde{x}_j,\ \tilde{y}_j,\ \tilde{h}_j / H_{\max} \,]$$
+$$o_i = ( x_i, y_i, h_i / H_{\max}, \mathbf{1}_{\mathrm{LoS}}, \tilde{x}_j, \tilde{y}_j, \tilde{h}_j / H_{\max} )$$
 
 where $(\tilde{x}_j, \tilde{y}_j, \tilde{h}_j) = (x_j, y_j, h_j)$ when LoS is open and $(0, 0, 0)$ when blocked. This masking is what makes the problem a POMDP — each agent's observation is a *partial* view of the underlying world state.
 
@@ -38,7 +38,7 @@ The transition kernel $P(s' \mid s, a)$ has two parts:
 - **Movement** is deterministic: positions translate by $\Delta d = 0.5$ in the chosen direction, clipped to arena bounds.
 - **Combat** is probabilistic. When agent $i$ fires with LoS open, the hit probability uses the **Option C 近大远小** formula:
 
-$$P_{\mathrm{hit}} = \exp\!\left( -\frac{\| p_j - p_i \|}{\sigma} \right) \cdot \max\!\left( \epsilon_{\min},\ \frac{\arctan\!\left( d_{\mathrm{peek}} / \| c - p_i \| \right)}{\pi / 2} \right)$$
+$$P_{\mathrm{hit}} = \exp\left( -\frac{\| p_j - p_i \|}{\sigma} \right) \cdot \max\left( \epsilon_{\min}, \frac{\arctan\left( d_{\mathrm{peek}} / \| c - p_i \| \right)}{\pi / 2} \right)$$
 
 where $c$ is the **active corner** (the wall endpoint inside the shooter–target sightline) and $d_{\mathrm{peek}}$ is the target's perpendicular distance to the shadow ray $p_i \to c$. Smaller peek → smaller exposure → smaller hit probability. Computed in `core/geometry.los_and_active_corner` and `core/geometry.hit_probability`.
 
@@ -46,7 +46,7 @@ where $c$ is the **active corner** (the wall endpoint inside the shooter–targe
 
 For each agent, per step:
 
-$$r = R_k \cdot \mathbf{1}_{\mathrm{kill}} \;-\; R_t \;-\; R_b \cdot \mathbf{1}_{\mathrm{blind\text{-}fire}} \;+\; w \cdot ( \gamma\, \Phi(s') - \Phi(s) )$$
+$$r = R_k \cdot \mathbf{1}_{\mathrm{kill}} - R_t - R_b \cdot \mathbf{1}_{\mathrm{blind\text{-}fire}} + w \cdot ( \gamma \Phi(s') - \Phi(s) )$$
 
 where the blind-fire indicator fires when the agent shoots without LoS, and $\Phi(s) = -\| p - z \|$ is the **potential function** — the negative distance to a chosen target zone $z$ (typically a wall corner). The shaping term is **Ng–Russell–Russell potential-based**, so adding it preserves the set of optimal policies. The weight $w$ is decayed linearly to zero by `CurriculumCallback`, so the final policy is optimal under the pure zero-sum reward.
 
